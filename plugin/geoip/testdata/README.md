@@ -1,6 +1,17 @@
 # testdata
 This directory contains mmdb database files used during the testing of this plugin.
 
+Additional fixtures:
+
+- `GeoLite2-Country.mmdb`: a country-only database (`GeoLite2-Country` type) holding the country
+  and continent records of the city fixture.
+- `GeoIP2-Precision-Enterprise.mmdb`: an enterprise database whose `GeoIP2-Precision-Enterprise`
+  database type is not known to the geoip2 library, exercising the direct MMDB loading path. It
+  holds the city fixture records plus `autonomous_system_number` (12345) and
+  `autonomous_system_organization` ("Test ASN Organization").
+- `corrupted.mmdb`: a file with garbage content and no MMDB metadata marker, used to assert that
+  load errors name the detected format and that fallback policies keep the service available.
+
 # Create mmdb database files
 If you need to change them to add a new value, or field the best is to recreate them, the code snipped used to create them initially is provided next.
 

@@ -55,6 +55,7 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/letsencrypt/pebble/v2 v2.10.1
 	github.com/mholt/acmez/v3 v3.1.7
+	github.com/oschwald/maxminddb-golang/v2 v2.8.0
 	github.com/pires/go-proxyproto v0.16.0
 	github.com/prometheus/exporter-toolkit v0.20.0
 	go.uber.org/zap v1.28.0
@@ -165,7 +166,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f // indirect
 	github.com/opentracing-contrib/go-observer v0.0.0-20170622124052-a52f23424492 // indirect
-	github.com/oschwald/maxminddb-golang/v2 v2.8.0 // indirect
 	github.com/outcaste-io/ristretto v0.2.3 // indirect
 	github.com/pandatix/go-abnf v0.5.3 // indirect
 	github.com/petermattis/goid v0.0.0-20260226131333-17d1149c6ac6 // indirect

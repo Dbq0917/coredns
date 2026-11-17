@@ -16,19 +16,7 @@ func (g GeoIP) setCityMetadata(ctx context.Context, data *geoip2.City) {
 	metadata.SetValueFunc(ctx, pluginName+"/city/name", func() string {
 		return cityName
 	})
-	countryName := data.Country.Names.English
-	metadata.SetValueFunc(ctx, pluginName+"/country/name", func() string {
-		return countryName
-	})
-	continentName := data.Continent.Names.English
-	metadata.SetValueFunc(ctx, pluginName+"/continent/name", func() string {
-		return continentName
-	})
-
-	countryCode := data.Country.ISOCode
-	metadata.SetValueFunc(ctx, pluginName+"/country/code", func() string {
-		return countryCode
-	})
+	setCountryMetadataValues(ctx, data.Country, data.Continent)
 
 	// Subdivisions represent administrative divisions (e.g., provinces, states) and are provided
 	// by the MaxMind database as a hierarchical list of up to 2 levels, ISO codes are set in metadata as
@@ -39,15 +27,6 @@ func (g GeoIP) setCityMetadata(ctx context.Context, data *geoip2.City) {
 	}
 	metadata.SetValueFunc(ctx, pluginName+"/subdivisions/code", func() string {
 		return strings.Join(subdivisionCodes, ",")
-	})
-
-	isInEurope := strconv.FormatBool(data.Country.IsInEuropeanUnion)
-	metadata.SetValueFunc(ctx, pluginName+"/country/is_in_european_union", func() string {
-		return isInEurope
-	})
-	continentCode := data.Continent.Code
-	metadata.SetValueFunc(ctx, pluginName+"/continent/code", func() string {
-		return continentCode
 	})
 
 	var latitude string
