@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +23,13 @@ func setup(c *caddy.Controller) error {
 
 	c.OnStartup(sign.OnStartup)
 	c.OnStartup(func() error {
+		if sign.disabled {
+			return nil
+		}
 		for _, signer := range sign.signers {
+			if signer.disabled {
+				continue
+			}
 			go signer.refresh(durationRefreshHours)
 		}
 		return nil
@@ -65,6 +72,7 @@ func parse(c *caddy.Controller) (*Sign, error) {
 				jitterIncep: time.Duration(float32(durationInceptionJitter) * rand.Float32()),     // #nosec G404 -- non-cryptographic jitter.
 				jitterExpir: time.Duration(float32(durationExpirationDayJitter) * rand.Float32()), // #nosec G404 -- non-cryptographic jitter.
 				directory:   "/var/lib/coredns",
+				keyReload:   durationKeyReload,
 				stop:        make(chan struct{}),
 				signedfile:  fmt.Sprintf("db.%ssigned", origins[i]), // origins[i] is a fqdn, so it ends with a dot, hence %ssigned.
 			}
@@ -73,15 +81,57 @@ func parse(c *caddy.Controller) (*Sign, error) {
 		for c.NextBlock() {
 			switch c.Val() {
 			case "key":
-				pairs, err := keyParse(c)
+				keyCfg, err := parseKeyConfig(c)
 				if err != nil {
 					return sign, err
 				}
 				for i := range signers {
-					for _, p := range pairs {
-						p.Public.Header().Name = signers[i].origin
+					inlineKeys := append(signers[i].inlineKeys, pairsForOrigin(keyCfg.inlinePairs, signers[i].origin)...)
+					dirs := append(append([]string(nil), signers[i].keyDirs...), keyCfg.directories...)
+					var directoryKeys []Pair
+					var keyHash string
+					if len(dirs) > 0 {
+						pairs, hash, err := loadNewestKeyPair(dirs)
+						if err != nil {
+							return sign, err
+						}
+						directoryKeys = pairsForOrigin(pairs, signers[i].origin)
+						keyHash = hash
 					}
-					signers[i].keys = append(signers[i].keys, pairs...)
+					keys := append(append([]Pair(nil), inlineKeys...), directoryKeys...)
+					signers[i].setKeys(keys, inlineKeys, dirs, keyHash)
+					if len(directoryKeys) > 0 {
+						activeKey.WithLabelValues(signers[i].origin).Set(float64(directoryKeys[len(directoryKeys)-1].KeyTag))
+					}
+				}
+			case "key_reload":
+				args := c.RemainingArgs()
+				if len(args) != 1 {
+					return sign, fmt.Errorf("can only be one argument after %q", "key_reload")
+				}
+				interval, err := time.ParseDuration(args[0])
+				if err != nil || interval <= 0 {
+					return sign, fmt.Errorf("invalid %q duration %q", "key_reload", args[0])
+				}
+				for i := range signers {
+					signers[i].keyReload = interval
+				}
+			case "disable", "disabled":
+				args := c.RemainingArgs()
+				if len(args) > 1 {
+					return sign, fmt.Errorf("can only be one argument after %q", c.Val())
+				}
+				disabled := true
+				if len(args) == 1 {
+					var err error
+					disabled, err = strconv.ParseBool(args[0])
+					if err != nil {
+						return sign, fmt.Errorf("invalid %q value %q", c.Val(), args[0])
+					}
+				}
+				sign.disabled = disabled
+				for i := range signers {
+					signers[i].disabled = disabled
 				}
 			case "directory":
 				dir := c.RemainingArgs()

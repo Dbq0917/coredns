@@ -17,8 +17,9 @@ Only NSEC is supported, *sign* does *not* support NSEC3.
 files, *auto* and *file* **serve** the zones *data*.
 
 For this plugin to work at least one Common Signing Key, (see coredns-keygen(1)) is needed. This key
-(or keys) will be used to sign the entire zone. *Sign* does *not* support the ZSK/KSK split, nor will
-it do key or algorithm rollovers - it just signs.
+(or keys) will be used to sign the entire zone. *Sign* does *not* support the ZSK/KSK split. With
+`key file` it signs with every configured key. With `key directory` it selects the newest complete
+key pair and can switch to a new pair without restarting CoreDNS.
 
 *Sign* will:
 
@@ -61,6 +62,8 @@ A generated zone is written out in a file named `db.<name>.signed` in the direct
 sign DBFILE [ZONES...] {
     key file|directory KEY...|DIR...
     directory DIR
+    key_reload DURATION
+    disabled [BOOL]
 }
 ~~~
 
@@ -70,12 +73,25 @@ sign DBFILE [ZONES...] {
    used.
 * `key` specifies the key(s) (there can be multiple) to sign the zone. If `file` is
    used the **KEY**'s filenames are used as is. If `directory` is used, *sign* will look in **DIR**
-   for `K<name>+<alg>+<id>` files. Any metadata in these files (Activate, Publish, etc.) is
-   *ignored*. These keys must also be Key Signing Keys (KSK).
+   for complete `K<name>+<alg>+<id>.key` and `K<name>+<alg>+<id>.private` pairs. If the directory
+   contains multiple pairs, the pair with the newest file modification time is selected; metadata
+   inside these files (Activate, Publish, etc.) is *ignored*. These keys must also be Key Signing
+   Keys (KSK).
+
+   The directory is rescanned while CoreDNS is running. Adding a newer complete pair causes the
+   zone to be re-signed with the new key and atomically replaced, without a restart or a second
+   signing process. Both files must be present before the pair is usable. A failed scan (for
+   example an unreadable directory, a missing private key, or an invalid key) is reported as an
+   error and retried; the last known good keys remain active so existing service is not interrupted.
+
 *  `directory` specifies the **DIR** where CoreDNS should save zones that have been signed.
    If not given this defaults to `/var/lib/coredns`. The zones are saved under the name
    `db.<name>.signed`. If the path is relative the path from the *root* plugin will be prepended
    to it.
+* `key_reload` specifies how often `key directory` is rescanned. The default is `5s`. It uses the
+   plugin's existing refresh goroutine and does not start another daemon.
+* `disabled` temporarily disables signing for the configured zones. `disabled false` keeps the
+   configuration valid while re-enabling signing. The default is `false`.
 
 Keys can be generated with `coredns-keygen`, to create one for use in the *sign* plugin, use:
 `coredns-keygen example.org` or `dnssec-keygen -a ECDSAP256SHA256 -f KSK example.org`.
@@ -106,6 +122,27 @@ shorter intervals).
 [INFO] plugin/sign: Successfully signed zone "example.org." in "/tmp/db.example.org.signed" with key tags "59725" and 1564766865 SOA serial, elapsed 9.357933ms, next: 2019-08-02T22:27:45.270Z
 [INFO] plugin/file: Successfully reloaded zone "example.org." in "/tmp/db.example.org.signed" with serial 1564766865
 ~~~
+
+Use a key directory for online key rotation. The directory should live outside the configuration
+repository and have stricter access controls and an independent backup policy:
+
+~~~ txt
+example.org {
+    file /var/lib/coredns/db.example.org.signed
+
+    sign db.example.org {
+        key directory /etc/coredns/keys/example.org
+        directory /var/lib/coredns
+        key_reload 30s
+    }
+}
+~~~
+
+To rotate, publish a complete new key pair into the directory. The next scan selects the newest
+pair and re-signs the zone. To roll back, restore the previous pair with a newer modification time
+(or restore the complete directory snapshot with new timestamps); no restart is needed. A separate
+canary instance can use a different key directory and be validated against the signatures before
+the same pair is published to all production instances.
 
 Or use a single zone file for *multiple* zones, note that the **ZONES** are repeated for both plugins.
 Also note this outputs *multiple* signed output files. Here we use the default output directory
@@ -163,6 +200,21 @@ coredns-keygen directory.
 Other useful DNSSEC tools can be found in [ldns](https://nlnetlabs.nl/projects/ldns/about/), e.g.
 `ldns-key2ds` to create DS records from DNSKEYs.
 
-## Bugs
+## Metrics
 
-`keys directory` is not implemented.
+If monitoring is enabled (via the *prometheus* plugin), the following metrics are exported:
+
+* `coredns_sign_key_loads_total{zone, result}` - key directory loads by result.
+* `coredns_sign_key_load_last_error_timestamp_seconds{zone}` - time of the last failed key load.
+* `coredns_sign_key_load_last_success_timestamp_seconds{zone}` - time of the last successful key load.
+* `coredns_sign_active_key_key_tag{zone}` - selected directory-backed key tag.
+* `coredns_sign_operations_total{zone, result}` - successful and failed signing operations.
+* `coredns_sign_last_success_timestamp_seconds{zone}` - time of the last successful signing.
+* `coredns_sign_resign_reasons_total{zone, reason}` - reasons a zone was re-signed.
+* `coredns_sign_enabled{zone}` - whether signing is enabled for the zone.
+
+Failures also emit a stable `code=` value in the plugin log and in the `result`/`reason` metric
+labels: `key_load_error` (key configuration or directory problem), `signing_error`, `write_error`,
+`signed_zone_missing`, `signature_expired`, `signature_not_yet_valid`, `signature_missing`, or
+`resign_required`. This lets monitoring distinguish a key/configuration problem from a signing or
+signature-validity problem.
